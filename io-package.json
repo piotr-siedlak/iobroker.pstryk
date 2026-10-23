@@ -1,8 +1,9 @@
 {
   "common": {
     "name": "pstryk",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "news": {
+      "0.1.2": { "en": "Manual fetch button (commands.fetch_now)", "pl": "Przycisk ręcznego pobrania cen" },
       "0.1.1": { "en": "Fix price fetching (field names, numeric strings, placeholder days)", "pl": "Poprawa pobierania cen" }, "0.1.0": { "en": "Initial release", "pl": "Pierwsze wydanie" } },
     "titleLang": { "en": "Pstryk", "pl": "Pstryk" },
     "desc": {

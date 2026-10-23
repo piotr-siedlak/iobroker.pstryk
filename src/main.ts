@@ -30,6 +30,7 @@ const HOURLY_MODES = [
 const METRIC_GROUPS = new Set(['meterValues', 'meter_values', 'cost', 'carbon', 'pricing']);
 
 const KEEP_MS = 4 * 24 * HOUR;
+const MANUAL_COOLDOWN_MS = 60_000;
 const safe = (k: string): string => k.replace(/[^A-Za-z0-9_-]/g, '_');
 const group = (k: string): string =>
     /sold|export|balance/.test(k) ? 'prosumer' : /cost|vat|dist|fee|price|value/.test(k) ? 'costs' : 'energy';
@@ -44,6 +45,7 @@ class Pstryk extends utils.Adapter {
     private known = new Set<string>();
     private busy = false;
     private unloading = false;
+    private lastManual = 0;
 
     private get cfg(): Record<string, any> {
         return this.config as unknown as Record<string, any>;
@@ -52,6 +54,11 @@ class Pstryk extends utils.Adapter {
     public constructor(options: Partial<utils.AdapterOptions> = {}) {
         super({ ...options, name: 'pstryk' });
         this.on('ready', () => this.onReady());
+        this.on('stateChange', (id, state) => {
+            if (state && !state.ack && state.val && id === `${this.namespace}.commands.fetch_now`) {
+                void this.manualFetch();
+            }
+        });
         this.on('unload', cb => {
             this.unloading = true;
             if (this.timer) {
@@ -84,11 +91,42 @@ class Pstryk extends utils.Adapter {
         } else {
             delete this.cache.sources.year;
         }
+        await this.setObjectNotExistsAsync('commands.fetch_now', {
+            type: 'state',
+            common: { name: 'Fetch prices now (not counted in local limit)', type: 'boolean', role: 'button', read: false, write: true, def: false },
+            native: {},
+        });
+        this.subscribeStates('commands.fetch_now');
         await this.loop();
     }
 
+    /** Manual fetch from the button: bypasses the local limiter, but Pstryk's own server limit still applies. */
+    private async manualFetch(): Promise<void> {
+        const now = Date.now();
+        if (this.busy || now - this.lastManual < MANUAL_COOLDOWN_MS) {
+            this.log.info('Manual fetch ignored (fetch in progress or pressed less than 60 s ago)');
+            return;
+        }
+        this.lastManual = now;
+        this.busy = true;
+        try {
+            this.log.info('Manual price fetch requested');
+            await this.fetchSource('hourly', true);
+            await this.render(Date.now());
+        } catch (e) {
+            this.log.error(`Manual fetch error: ${(e as Error).message}`);
+        }
+        this.busy = false;
+        await this.setStateAsync('commands.fetch_now', { val: false, ack: true });
+    }
+
     private async loop(): Promise<void> {
-        if (this.busy || this.unloading) {
+        if (this.unloading) {
+            return;
+        }
+        if (this.busy) {
+            // a manual fetch is running; try again shortly so the schedule never stops
+            this.timer = setTimeout(() => void this.loop(), 2000);
             return;
         }
         this.busy = true;
@@ -126,7 +164,7 @@ class Pstryk extends utils.Adapter {
         this.timer = setTimeout(() => void this.loop(), Math.max(500, at - now));
     }
 
-    private async fetchSource(src: Source): Promise<void> {
+    private async fetchSource(src: Source, manual = false): Promise<void> {
         const key = String(this.cfg.apiKey ?? '');
         const st = this.cache.sources[src]!;
         const now = Date.now();
@@ -135,8 +173,10 @@ class Pstryk extends utils.Adapter {
             await this.persist();
             return;
         }
-        st.lastAttempt = now;
-        this.limiter.record(now);
+        if (!manual) {
+            st.lastAttempt = now;
+            this.limiter.record(now);
+        }
         const client = new PstrykClient(key);
         try {
             const mode = HOURLY_MODES[this.cache.hourlyMode] ?? HOURLY_MODES[0];

@@ -21,6 +21,13 @@ Enter the API key in the instance configuration (stored encrypted).
 - If the API answers HTTP 400, the adapter tries alternative request variants
   (`meter_values`/`meterValues`, with/without future window).
 
+## Manual fetch
+
+Write `true` to `commands.fetch_now` (button) to fetch prices immediately. This request is **not**
+counted in the adapter's local limit (60 s cooldown between presses). Pstryk's own server limit
+(3 heavy requests/hour) still applies — overusing the button can get HTTP 429 and block
+automatic fetching for an hour.
+
 ## Objects
 
 | Path | Content |
