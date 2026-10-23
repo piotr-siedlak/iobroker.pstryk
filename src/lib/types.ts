@@ -4,6 +4,7 @@ export interface PricePoint {
     buyGross: number | null;
     buyNet: number | null;
     sellGross: number | null;
+    sellNet?: number | null;
     isCheap: boolean | null;
     isExpensive: boolean | null;
 }

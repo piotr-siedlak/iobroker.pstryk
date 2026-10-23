@@ -2,7 +2,7 @@ import * as utils from '@iobroker/adapter-core';
 import { PstrykClient, PstrykError } from './lib/client';
 import { analyze, cheapestHours, cheapestWindow, isCheap, iso } from './lib/calc';
 import { RateLimiter } from './lib/limiter';
-import { parseFrames, toPricePoint } from './lib/parse';
+import { dropPlaceholderDays, parseFrames, toPricePoint } from './lib/parse';
 import { buildRolling } from './lib/rolling';
 import { decide, type Source, type SourceState } from './lib/scheduler';
 import { dayStart, floorHour, HOUR, monthStart, TZ, yearStart } from './lib/time';
@@ -96,7 +96,10 @@ class Pstryk extends utils.Adapter {
         try {
             const now = Date.now();
             await this.render(now);
-            const d = decide(Date.now(), this.cache.sources, this.limiter);
+            const d = this.cfg.apiKey ? decide(Date.now(), this.cache.sources, this.limiter) : { run: [], nextAt: Infinity };
+            if (!this.cfg.apiKey) {
+                this.cache.lastError = 'API key not configured';
+            }
             if (d.run.length) {
                 for (const src of d.run) {
                     if (this.unloading) {
@@ -127,12 +130,12 @@ class Pstryk extends utils.Adapter {
         const key = String(this.cfg.apiKey ?? '');
         const st = this.cache.sources[src]!;
         const now = Date.now();
-        st.lastAttempt = now;
         if (!key) {
             this.cache.lastError = 'API key not configured';
             await this.persist();
             return;
         }
+        st.lastAttempt = now;
         this.limiter.record(now);
         const client = new PstrykClient(key);
         try {
@@ -185,11 +188,9 @@ class Pstryk extends utils.Adapter {
 
     private mergeHourly(frames: Frame[], now: number): void {
         const pts = new Map(this.cache.points.map(p => [p.start, p]));
-        for (const f of frames) {
-            const p = toPricePoint(f);
-            if (p) {
-                pts.set(p.start, p);
-            }
+        const fresh = frames.map(toPricePoint).filter((p): p is PricePoint => p !== null);
+        for (const p of dropPlaceholderDays(fresh, now)) {
+            pts.set(p.start, p);
         }
         const fr = new Map(this.cache.frames.map(f => [f.start, f]));
         for (const f of frames) {
@@ -234,6 +235,7 @@ class Pstryk extends utils.Adapter {
             await this.put(`${base}.buy_gross`, p?.buyGross ?? null, pc('Buy price gross'));
             await this.put(`${base}.buy_net`, p?.buyNet ?? null, pc('Buy price net'));
             await this.put(`${base}.sell_gross`, p?.sellGross ?? null, pc('Sell price gross'));
+            await this.put(`${base}.sell_net`, p?.sellNet ?? null, pc('Sell price net'));
             await this.put(`${base}.is_cheap`, p ? isCheap(s, a.avg, thr) : null, bc('Is cheap'));
             await this.put(`${base}.is_expensive`, p ? (p.isExpensive ?? (a.avg !== null && (p.buyGross ?? p.buyNet) !== null && (p.buyGross ?? p.buyNet)! >= a.avg * (1 + thr / 100))) : null, bc('Is expensive'));
             await this.put(`${base}.start_time`, iso(s.start), sc('Start'));

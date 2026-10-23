@@ -5,7 +5,7 @@ import { RateLimiter } from '../src/lib/limiter';
 import { decide } from '../src/lib/scheduler';
 import { dayStart, HOUR } from '../src/lib/time';
 import { PstrykClient, PstrykError, type FetchFn } from '../src/lib/client';
-import { parseFrames, toPricePoint } from '../src/lib/parse';
+import { dropPlaceholderDays, parseFrames, toPricePoint } from '../src/lib/parse';
 import { analyze, cheapestHours, cheapestWindow } from '../src/lib/calc';
 import type { PricePoint } from '../src/lib/types';
 
@@ -110,7 +110,7 @@ test('client: sends key and query', async () => {
     const f: FetchFn = async (u, i) => { seen = u; auth = i.headers.Authorization; return { status: 200, ok: true, headers: { get: () => null }, text: async () => '{"frames":[]}' }; };
     await new PstrykClient('secret', f).unified({ ...params, forTz: 'Europe/Warsaw' });
     assert.equal(auth, 'secret');
-    assert.match(seen, /unified-metrics\/\?metrics=pricing&resolution=hour&window_start=2026-10-23T11%3A00%3A00.000Z&for_tz=Europe%2FWarsaw/);
+    assert.match(seen, /unified-metrics\/\?metrics=pricing&resolution=hour&window_start=2026-10-23T11%3A00%3A00Z&for_tz=Europe%2FWarsaw/);
 });
 
 test('parse: maps known pricing fields and keeps unknown ones flat', () => {
@@ -153,4 +153,25 @@ test('scheduler: long-term fetches keep one slot free for the next hourly fetch'
     l.record(T + 20 * 60_000);
     // at next HH:00:01 hourly is allowed although month ran 40 min earlier
     assert.deepEqual(decide(T + HOUR + 1000, { ...st, month: { lastOk: T + 20 * 60_000, lastAttempt: T + 20 * 60_000 } }, l).run, ['hourly']);
+});
+
+test('parse: numeric strings and prosumer prices', () => {
+    const { frames } = parseFrames({ frames: [{ start: '2026-10-23T11:00:00Z', end: '2026-10-23T12:00:00Z', metrics: { pricing: { price_gross: '0,81', price_net: '0.66', price_prosumer_gross: 0.4, price_prosumer_net: 0.33 } } }] });
+    const p = toPricePoint(frames[0])!;
+    assert.equal(p.buyGross, 0.81);
+    assert.equal(p.buyNet, 0.66);
+    assert.equal(p.sellNet, 0.33);
+});
+
+test('placeholder days: incomplete or constant future days are dropped, past hours of today kept', () => {
+    const d0 = dayStart(T);
+    const day = (start: number, n: number, f: (i: number) => number): PricePoint[] => Array.from({ length: n }, (_, i) => pt(start + i * HOUR, f(i)));
+    const today = day(d0, 24, i => i);
+    const tomorrowConst = day(dayStart(T, 1), 24, () => 0.5);
+    const out = dropPlaceholderDays([...today, ...tomorrowConst], T);
+    assert.equal(out.length, 24);
+    const partialToday = day(d0, 15, i => i);
+    assert.equal(dropPlaceholderDays(partialToday, T).every(p => p.start <= T), true);
+    const realTomorrow = day(dayStart(T, 1), 24, i => i + 1);
+    assert.equal(dropPlaceholderDays([...today, ...realTomorrow], T).length, 48);
 });

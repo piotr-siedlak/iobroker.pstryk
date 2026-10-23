@@ -1,3 +1,4 @@
+import { dayStart, HOUR } from './time';
 import type { Flat, Frame, PricePoint } from './types';
 
 export function flatten(obj: unknown, prefix = '', out: Flat = {}): Flat {
@@ -33,10 +34,12 @@ export function parseFrames(resp: unknown): { frames: Frame[]; summary: Flat } {
     return { frames, summary: flatten(r.summary) };
 }
 
+// field names observed in the unified-metrics `pricing` metric (same as the pstryk-ai HA integration)
 const ALIASES = {
-    buyGross: ['price_gross', 'full_price', 'price_with_vat', 'buy_gross', 'price'],
-    buyNet: ['price_net', 'price_netto', 'buy_net'],
-    sellGross: ['price_prosumer_gross', 'price_prosumer', 'prosumer_price', 'sell_gross', 'price_sell', 'sell_price'],
+    buyGross: ['price_gross'],
+    buyNet: ['price_net'],
+    sellGross: ['price_prosumer_gross'],
+    sellNet: ['price_prosumer_net'],
     isCheap: ['is_cheap'],
     isExpensive: ['is_expensive'],
 };
@@ -44,7 +47,14 @@ const ALIASES = {
 function pick(m: Flat, names: string[]): number | boolean | null {
     for (const n of names) {
         for (const [k, v] of Object.entries(m)) {
-            if (k.startsWith('pricing.') && k.split('.').pop() === n && v !== null && typeof v !== 'string') {
+            if (k.startsWith('pricing.') && k.split('.').pop() === n && v !== null && v !== '') {
+                if (typeof v === 'string') {
+                    const x = Number(v.replace(',', '.').trim());
+                    if (Number.isFinite(x)) {
+                        return x;
+                    }
+                    continue;
+                }
                 return v;
             }
         }
@@ -66,8 +76,37 @@ export function toPricePoint(f: Frame): PricePoint | null {
         buyGross: num(pick(f.m, ALIASES.buyGross)),
         buyNet: num(pick(f.m, ALIASES.buyNet)),
         sellGross: num(pick(f.m, ALIASES.sellGross)),
+        sellNet: num(pick(f.m, ALIASES.sellNet)),
         isCheap: bool(pick(f.m, ALIASES.isCheap)),
         isExpensive: bool(pick(f.m, ALIASES.isExpensive)),
     };
     return p.buyGross === null && p.buyNet === null && p.sellGross === null ? null : p;
+}
+
+/**
+ * Drops unpublished placeholder prices: a local day counts only when every hour has a price and
+ * the prices are not (almost) all identical. Past hours of today are always kept.
+ */
+export function dropPlaceholderDays(points: PricePoint[], now: number): PricePoint[] {
+    const byDay = new Map<number, PricePoint[]>();
+    for (const p of points) {
+        const d = dayStart(p.start);
+        byDay.set(d, [...(byDay.get(d) ?? []), p]);
+    }
+    const today = dayStart(now);
+    const out: PricePoint[] = [];
+    for (const [day, pts] of byDay) {
+        const expected = Math.round((dayStart(day, 1) - day) / HOUR);
+        const vals = pts.map(p => p.buyGross ?? p.buyNet).filter((v): v is number => v !== null);
+        const counts = new Map<number, number>();
+        vals.forEach(v => counts.set(Math.round(v * 1e5), (counts.get(Math.round(v * 1e5)) ?? 0) + 1));
+        const top = Math.max(0, ...counts.values());
+        const placeholder = vals.length < expected || top / vals.length > 0.9;
+        if (!placeholder) {
+            out.push(...pts);
+        } else if (day <= today) {
+            out.push(...pts.filter(p => p.start <= now));
+        }
+    }
+    return out.sort((a, b) => a.start - b.start);
 }

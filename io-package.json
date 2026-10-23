@@ -1,8 +1,9 @@
 {
   "common": {
     "name": "pstryk",
-    "version": "0.1.0",
-    "news": { "0.1.0": { "en": "Initial release", "pl": "Pierwsze wydanie" } },
+    "version": "0.1.1",
+    "news": {
+      "0.1.1": { "en": "Fix price fetching (field names, numeric strings, placeholder days)", "pl": "Poprawa pobierania cen" }, "0.1.0": { "en": "Initial release", "pl": "Pierwsze wydanie" } },
     "titleLang": { "en": "Pstryk", "pl": "Pstryk" },
     "desc": {
       "en": "Pstryk API: prices, rolling 24h window, energy, costs and automation helpers",

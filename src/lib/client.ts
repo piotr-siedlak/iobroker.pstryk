@@ -26,6 +26,8 @@ export interface UnifiedParams {
     forTz?: string;
 }
 
+const z = (ms: number): string => new Date(Math.floor(ms / 1000) * 1000).toISOString().replace('.000Z', 'Z');
+
 export class PstrykClient {
     public constructor(
         private readonly apiKey: string,
@@ -38,10 +40,10 @@ export class PstrykClient {
         const q = new URLSearchParams({
             metrics: p.metrics.join(','),
             resolution: p.resolution,
-            window_start: new Date(p.windowStart).toISOString(),
+            window_start: z(p.windowStart),
         });
         if (p.windowEnd) {
-            q.set('window_end', new Date(p.windowEnd).toISOString());
+            q.set('window_end', z(p.windowEnd));
         }
         if (p.forTz) {
             q.set('for_tz', p.forTz);
