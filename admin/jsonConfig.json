@@ -1,0 +1,12 @@
+{
+  "type": "panel",
+  "items": {
+    "apiKey": { "type": "password", "label": "API key", "help": "Pstryk API token", "sm": 12, "md": 6, "newLine": true },
+    "priceUnit": { "type": "text", "label": "Price unit (as documented by API)", "sm": 6, "md": 3, "newLine": true },
+    "cheapThresholdPct": { "type": "number", "label": "Cheap threshold (% below 24h average, fallback when API gives no flag)", "min": 0, "max": 90, "sm": 6, "md": 3 },
+    "chargeWindowHours": { "type": "number", "label": "Charging/heating window (hours)", "min": 1, "max": 12, "sm": 6, "md": 3 },
+    "maxRequestsPerHour": { "type": "number", "label": "Max API requests per hour (Pstryk limit: 3)", "min": 1, "max": 3, "sm": 6, "md": 3 },
+    "fetchMonth": { "type": "checkbox", "label": "Fetch monthly totals (every 6 h)", "newLine": true },
+    "fetchYear": { "type": "checkbox", "label": "Fetch yearly totals (every 12 h)" }
+  }
+}

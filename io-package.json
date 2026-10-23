@@ -1,0 +1,51 @@
+{
+  "common": {
+    "name": "pstryk",
+    "version": "0.1.0",
+    "news": { "0.1.0": { "en": "Initial release", "pl": "Pierwsze wydanie" } },
+    "titleLang": { "en": "Pstryk", "pl": "Pstryk" },
+    "desc": {
+      "en": "Pstryk API: prices, rolling 24h window, energy, costs and automation helpers",
+      "pl": "API Pstryk: ceny, przesuwane 24h, energia, koszty i pomocnicze obliczenia dla automatyki"
+    },
+    "authors": ["Piotr Siedlak <siedlak.piotr@gmail.com>"],
+    "keywords": ["pstryk", "energy", "prices", "tge"],
+    "license": "MIT",
+    "platform": "Javascript/Node.js",
+    "icon": "pstryk.svg",
+    "enabled": true,
+    "extIcon": "https://raw.githubusercontent.com/piotr-siedlak/iobroker.pstryk/main/admin/pstryk.svg",
+    "readme": "https://github.com/piotr-siedlak/iobroker.pstryk/blob/main/README.md",
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "energy",
+    "compact": true,
+    "connectionType": "cloud",
+    "dataSource": "poll",
+    "tier": 3,
+    "adminUI": { "config": "json" },
+    "supportCustoms": false,
+    "dependencies": [{ "js-controller": ">=5.0.19" }],
+    "globalDependencies": [{ "admin": ">=6.0.0" }]
+  },
+  "native": {
+    "apiKey": "",
+    "priceUnit": "PLN/kWh",
+    "cheapThresholdPct": 15,
+    "chargeWindowHours": 4,
+    "maxRequestsPerHour": 3,
+    "fetchMonth": true,
+    "fetchYear": true
+  },
+  "protectedNative": ["apiKey"],
+  "encryptedNative": ["apiKey"],
+  "objects": [],
+  "instanceObjects": [
+    { "_id": "info", "type": "channel", "common": { "name": "Information" }, "native": {} },
+    {
+      "_id": "info.connection", "type": "state",
+      "common": { "role": "indicator.connected", "name": "Connected to Pstryk API", "type": "boolean", "read": true, "write": false, "def": false },
+      "native": {}
+    }
+  ]
+}

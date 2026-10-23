@@ -1,0 +1,23 @@
+{
+  "name": "iobroker.pstryk",
+  "version": "0.1.0",
+  "description": "Pstryk API adapter: prices, rolling 24h window, energy and cost data",
+  "author": { "name": "Piotr Siedlak", "email": "siedlak.piotr@gmail.com" },
+  "license": "MIT",
+  "homepage": "https://github.com/piotr-siedlak/iobroker.pstryk",
+  "repository": { "type": "git", "url": "git+https://github.com/piotr-siedlak/iobroker.pstryk.git" },
+  "keywords": ["ioBroker", "pstryk", "energy", "prices"],
+  "engines": { "node": ">=20" },
+  "main": "build/main.js",
+  "files": ["admin/", "build/", "io-package.json", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test \"build-test/test/*.test.js\""
+  },
+  "dependencies": { "@iobroker/adapter-core": "^3.2.3" },
+  "devDependencies": {
+    "@iobroker/types": "^7.0.6",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3"
+  }
+}
