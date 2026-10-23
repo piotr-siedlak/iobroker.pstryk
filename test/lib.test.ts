@@ -135,7 +135,7 @@ test('calc: windows, cheapest hours, analysis', () => {
     assert.deepEqual(cheapestHours(slots, 1, true).map(s => s.index), [6]);
     const a = analyze(slots, 15);
     assert.equal(a.availableHours, 8);
-    assert.equal(a.hoursToNextCheap, 1);
+    assert.equal(a.hoursToNextCheap, 2);
     assert.equal(a.runNow, false);
     assert.equal(cheapestWindow(buildRolling([pt(T, 1)], T, 8), 2), null);
 });

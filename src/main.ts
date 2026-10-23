@@ -34,6 +34,10 @@ class Pstryk extends utils.Adapter {
     private known = new Set<string>();
     private busy = false;
 
+    private get cfg(): Record<string, any> {
+        return this.config as unknown as Record<string, any>;
+    }
+
     public constructor(options: Partial<utils.AdapterOptions> = {}) {
         super({ ...options, name: 'pstryk' });
         this.on('ready', () => this.onReady());
@@ -46,7 +50,7 @@ class Pstryk extends utils.Adapter {
     }
 
     private async onReady(): Promise<void> {
-        const n = this.config as unknown as Record<string, any>;
+        const n = this.cfg;
         this.limiter = new RateLimiter(Math.min(3, Math.max(1, Number(n.maxRequestsPerHour) || 3)));
         const st = await this.getStateAsync('info.cache');
         if (st?.val) {
@@ -102,7 +106,7 @@ class Pstryk extends utils.Adapter {
     }
 
     private async fetchSource(src: Source): Promise<void> {
-        const key = String(this.config.apiKey ?? '');
+        const key = String(this.cfg.apiKey ?? '');
         const st = this.cache.sources[src]!;
         const now = Date.now();
         st.lastAttempt = now;
@@ -191,9 +195,9 @@ class Pstryk extends utils.Adapter {
     }
 
     private async render(now: number): Promise<void> {
-        const unit = String(this.config.priceUnit || '');
-        const thr = Number(this.config.cheapThresholdPct) || 15;
-        const win = Number(this.config.chargeWindowHours) || 4;
+        const unit = String(this.cfg.priceUnit || '');
+        const thr = Number(this.cfg.cheapThresholdPct) || 15;
+        const win = Number(this.cfg.chargeWindowHours) || 4;
         const slots = buildRolling(this.cache.points, now);
         const a = analyze(slots, thr);
         const pc = (name: string, role = 'value.price'): Partial<ioBroker.StateCommon> => ({ type: 'number', role, unit, name });
