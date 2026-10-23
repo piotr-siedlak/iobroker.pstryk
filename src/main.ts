@@ -2,9 +2,9 @@ import * as utils from '@iobroker/adapter-core';
 import { PstrykClient, PstrykError } from './lib/client';
 import { analyze, cheapestHours, cheapestWindow, isCheap, iso } from './lib/calc';
 import { RateLimiter } from './lib/limiter';
-import { flatten, parseFrames, toPricePoint } from './lib/parse';
+import { parseFrames, toPricePoint } from './lib/parse';
 import { buildRolling } from './lib/rolling';
-import { decide, FETCH_DELAY_MS, type Source, type SourceState } from './lib/scheduler';
+import { decide, type Source, type SourceState } from './lib/scheduler';
 import { dayStart, floorHour, HOUR, monthStart, TZ, yearStart } from './lib/time';
 import type { Flat, Frame, PricePoint } from './lib/types';
 
@@ -17,7 +17,17 @@ interface Cache {
     limiter: { log: number[]; blockedUntil: number };
     lastError: string;
     fields: string[];
+    hourlyMode: number;
 }
+
+/** Hourly request variants tried in order when the API answers HTTP 400 (docs are ambiguous). */
+const HOURLY_MODES = [
+    { future: true, mv: 'meter_values' },
+    { future: true, mv: 'meterValues' },
+    { future: false, mv: 'meter_values' },
+    { future: false, mv: 'meterValues' },
+];
+const METRIC_GROUPS = new Set(['meterValues', 'meter_values', 'cost', 'carbon', 'pricing']);
 
 const KEEP_MS = 4 * 24 * HOUR;
 const safe = (k: string): string => k.replace(/[^A-Za-z0-9_-]/g, '_');
@@ -27,12 +37,13 @@ const group = (k: string): string =>
 class Pstryk extends utils.Adapter {
     private cache: Cache = {
         points: [], frames: [], month: {}, year: {}, sources: {},
-        limiter: { log: [], blockedUntil: 0 }, lastError: '', fields: [],
+        limiter: { log: [], blockedUntil: 0 }, lastError: '', fields: [], hourlyMode: 0,
     };
     private limiter = new RateLimiter(3);
     private timer?: NodeJS.Timeout;
     private known = new Set<string>();
     private busy = false;
+    private unloading = false;
 
     private get cfg(): Record<string, any> {
         return this.config as unknown as Record<string, any>;
@@ -42,6 +53,7 @@ class Pstryk extends utils.Adapter {
         super({ ...options, name: 'pstryk' });
         this.on('ready', () => this.onReady());
         this.on('unload', cb => {
+            this.unloading = true;
             if (this.timer) {
                 clearTimeout(this.timer);
             }
@@ -76,7 +88,7 @@ class Pstryk extends utils.Adapter {
     }
 
     private async loop(): Promise<void> {
-        if (this.busy) {
+        if (this.busy || this.unloading) {
             return;
         }
         this.busy = true;
@@ -87,6 +99,9 @@ class Pstryk extends utils.Adapter {
             const d = decide(Date.now(), this.cache.sources, this.limiter);
             if (d.run.length) {
                 for (const src of d.run) {
+                    if (this.unloading) {
+                        break;
+                    }
                     await this.fetchSource(src);
                 }
                 await this.render(Date.now());
@@ -98,6 +113,9 @@ class Pstryk extends utils.Adapter {
             this.log.error(`Loop error: ${(e as Error).message}`);
         }
         this.busy = false;
+        if (this.unloading) {
+            return;
+        }
         const now = Date.now();
         const boundary = floorHour(now) + HOUR;
         const at = Math.min(nextAt, boundary);
@@ -118,12 +136,12 @@ class Pstryk extends utils.Adapter {
         this.limiter.record(now);
         const client = new PstrykClient(key);
         try {
-            const today = dayStart(now);
+            const mode = HOURLY_MODES[this.cache.hourlyMode] ?? HOURLY_MODES[0];
             const resp =
                 src === 'hourly'
-                    ? await client.unified({ metrics: ['pricing', 'meter_values', 'cost'], resolution: 'hour', windowStart: dayStart(now, -1), windowEnd: dayStart(now, 2) })
+                    ? await client.unified({ metrics: ['pricing', mode.mv, 'cost'], resolution: 'hour', windowStart: dayStart(now, -1), windowEnd: mode.future ? dayStart(now, 2) : undefined })
                     : await client.unified({
-                          metrics: ['meter_values', 'cost'],
+                          metrics: [mode.mv, 'cost'],
                           resolution: src === 'month' ? 'day' : 'month',
                           windowStart: src === 'month' ? monthStart(now) : yearStart(now),
                           windowEnd: now,
@@ -131,7 +149,7 @@ class Pstryk extends utils.Adapter {
                       });
             const { frames, summary } = parseFrames(resp);
             if (src === 'hourly') {
-                this.mergeHourly(frames, now - 0, today);
+                this.mergeHourly(frames, now);
                 await this.put('raw.unified_metrics', JSON.stringify(resp), { type: 'string', role: 'json', name: 'Last raw unified-metrics response' });
             } else {
                 this.cache[src] = summary;
@@ -142,6 +160,7 @@ class Pstryk extends utils.Adapter {
             this.cache.fields = [...keys].sort();
             st.lastOk = now;
             this.cache.lastError = '';
+            await this.put('info.auth_error', false, { type: 'boolean', role: 'indicator.error', name: 'API key rejected' });
             await this.put('info.connection', true, { type: 'boolean', role: 'indicator.connected', name: 'Connected' });
             await this.put('info.last_update', new Date(now).toISOString(), { type: 'string', role: 'date', name: 'Last successful update' });
         } catch (e) {
@@ -152,6 +171,11 @@ class Pstryk extends utils.Adapter {
             }
             if (err.kind === 'auth') {
                 this.limiter.block(now + HOUR);
+                await this.put('info.auth_error', true, { type: 'boolean', role: 'indicator.error', name: 'API key rejected' });
+            }
+            if (err.kind === 'http' && err.status === 400 && this.cache.hourlyMode < HOURLY_MODES.length - 1) {
+                this.cache.hourlyMode++;
+                this.log.warn(`HTTP 400, switching request variant to ${JSON.stringify(HOURLY_MODES[this.cache.hourlyMode])}`);
             }
             this.log.warn(this.cache.lastError);
             await this.put('info.connection', false, { type: 'boolean', role: 'indicator.connected', name: 'Connected' });
@@ -159,7 +183,7 @@ class Pstryk extends utils.Adapter {
         await this.persist();
     }
 
-    private mergeHourly(frames: Frame[], now: number, _today: number): void {
+    private mergeHourly(frames: Frame[], now: number): void {
         const pts = new Map(this.cache.points.map(p => [p.start, p]));
         for (const f of frames) {
             const p = toPricePoint(f);
@@ -196,7 +220,8 @@ class Pstryk extends utils.Adapter {
 
     private async render(now: number): Promise<void> {
         const unit = String(this.cfg.priceUnit || '');
-        const thr = Number(this.cfg.cheapThresholdPct) || 15;
+        const thrRaw = Number(this.cfg.cheapThresholdPct);
+        const thr = Number.isFinite(thrRaw) && this.cfg.cheapThresholdPct !== '' ? thrRaw : 15;
         const win = Number(this.cfg.chargeWindowHours) || 4;
         const slots = buildRolling(this.cache.points, now);
         const a = analyze(slots, thr);
@@ -210,7 +235,7 @@ class Pstryk extends utils.Adapter {
             await this.put(`${base}.buy_net`, p?.buyNet ?? null, pc('Buy price net'));
             await this.put(`${base}.sell_gross`, p?.sellGross ?? null, pc('Sell price gross'));
             await this.put(`${base}.is_cheap`, p ? isCheap(s, a.avg, thr) : null, bc('Is cheap'));
-            await this.put(`${base}.is_expensive`, p ? (p.isExpensive ?? (a.avg !== null && p.buyGross !== null && p.buyGross >= a.avg * (1 + thr / 100))) : null, bc('Is expensive'));
+            await this.put(`${base}.is_expensive`, p ? (p.isExpensive ?? (a.avg !== null && (p.buyGross ?? p.buyNet) !== null && (p.buyGross ?? p.buyNet)! >= a.avg * (1 + thr / 100))) : null, bc('Is expensive'));
             await this.put(`${base}.start_time`, iso(s.start), sc('Start'));
             await this.put(`${base}.end_time`, iso(s.end), sc('End'));
             await this.put(`${base}.available`, p !== null, bc('Price available'));
@@ -234,7 +259,7 @@ class Pstryk extends utils.Adapter {
         // absolute + day views
         const dayView = async (name: string, from: number): Promise<void> => {
             const pts = this.cache.points.filter(p => p.start >= from && p.start < dayStart(from, 1));
-            const v = pts.map(p => p.buyGross).filter((x): x is number => x !== null);
+            const v = pts.map(p => p.buyGross ?? p.buyNet).filter((x): x is number => x !== null);
             await this.put(`prices.${name}.json`, JSON.stringify(pts), { type: 'string', role: 'json', name: `Prices ${name}` });
             await this.put(`prices.${name}.hours`, pts.length, { type: 'number', role: 'value', name: 'Hours known' });
             await this.put(`prices.${name}.min`, v.length ? Math.min(...v) : null, pc('Min'));
@@ -289,7 +314,8 @@ class Pstryk extends utils.Adapter {
                 if (typeof v !== 'number') {
                     continue;
                 }
-                const key = safe(k.split('.').pop()!);
+                const parts = k.split('.');
+                const key = safe((METRIC_GROUPS.has(parts[0]) && parts.length > 1 ? parts.slice(1) : parts).join('_'));
                 await this.put(`${group(key)}.${period}.${key}`, v, { type: 'number', role: 'value', name: k });
             }
         };
@@ -302,7 +328,6 @@ class Pstryk extends utils.Adapter {
         await write('yesterday', sumRange(dayStart(now, -1), dayStart(now)));
         await write('month', this.cache.month);
         await write('year', this.cache.year);
-        void flatten;
     }
 }
 

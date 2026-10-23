@@ -44,11 +44,13 @@ export function decide(
             continue;
         }
         const due = dueAt(src, st, now);
-        if (due <= now && limiter.canRequest(now, used + 1)) {
+        // long-term sources keep one slot free so the next hourly price fetch is never delayed
+        const need = used + (src === 'hourly' ? 1 : 2);
+        if (due <= now && limiter.canRequest(now, need)) {
             run.push(src);
             used++;
-        } else {
-            nextAt = Math.min(nextAt, Math.max(due, limiter.nextAllowed(now, used + 1)));
+        } else if (src === 'hourly' || limiter.max >= 2) {
+            nextAt = Math.min(nextAt, Math.max(due, limiter.nextAllowed(now, need)));
         }
     }
     return { run, nextAt };

@@ -139,3 +139,18 @@ test('calc: windows, cheapest hours, analysis', () => {
     assert.equal(a.runNow, false);
     assert.equal(cheapestWindow(buildRolling([pt(T, 1)], T, 8), 2), null);
 });
+
+test('scheduler: long-term fetches keep one slot free for the next hourly fetch', () => {
+    const l = new RateLimiter(3);
+    const st = {
+        hourly: { lastOk: T + 1000, lastAttempt: T + 1000 },
+        month: { lastOk: 0, lastAttempt: 0 },
+        year: { lastOk: 0, lastAttempt: 0 },
+    };
+    l.record(T + 1000);
+    const d = decide(T + 20 * 60_000, st, l);
+    assert.deepEqual(d.run, ['month']);
+    l.record(T + 20 * 60_000);
+    // at next HH:00:01 hourly is allowed although month ran 40 min earlier
+    assert.deepEqual(decide(T + HOUR + 1000, { ...st, month: { lastOk: T + 20 * 60_000, lastAttempt: T + 20 * 60_000 } }, l).run, ['hourly']);
+});
